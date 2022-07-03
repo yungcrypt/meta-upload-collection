@@ -60,8 +60,10 @@ export async function uploadV2({
   collectionMintPubkey,
   setCollectionMint,
   rpcUrl,
+  collectionConfig
 }: {
   files: string[];
+
   cacheName: string;
   env: 'mainnet-beta' | 'devnet';
   totalNFTs: number;
@@ -103,6 +105,7 @@ export async function uploadV2({
   collectionMintPubkey: null | PublicKey;
   setCollectionMint: boolean;
   rpcUrl: null | string;
+  collectionConfig: string;
 }): Promise<boolean> {
   const savedContent = loadCache(cacheName, env);
   const cacheContent = savedContent || {};
@@ -178,13 +181,16 @@ export async function uploadV2({
       cacheContent.program.uuid = res.uuid;
       cacheContent.program.candyMachine = res.candyMachine.toBase58();
       candyMachine = res.candyMachine;
+      console.log(collectionConfig)
 
       if (setCollectionMint) {
+        
         const collection = await setCollection(
           walletKeyPair,
           anchorProgram,
           res.candyMachine,
           collectionMintPubkey,
+          collectionConfig,
         );
         console.log('Collection: ', collection);
         cacheContent.program.collection = collection.collectionMetadata;

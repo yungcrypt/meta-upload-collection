@@ -1,4 +1,5 @@
 import { PublicKey, SystemProgram } from '@solana/web3.js';
+import * as fs from "fs-extra"
 import {
   getCollectionAuthorityRecordPDA,
   getCollectionPDA,
@@ -24,11 +25,14 @@ import log from 'loglevel';
 import { Program } from '@project-serum/anchor';
 import { parseCollectionMintPubkey } from '../helpers/various';
 
+
+
 export async function setCollection(
   walletKeyPair: anchor.web3.Keypair,
   anchorProgram: Program,
   candyMachineAddress: PublicKey,
   collectionMint: null | PublicKey,
+  collectionConfig: string,
 ) {
   const signers = [walletKeyPair];
   const wallet = new anchor.Wallet(walletKeyPair);
@@ -97,10 +101,12 @@ export async function setCollection(
         ),
       ],
     );
+    const collectionData = fs.readJSONSync(collectionConfig);
+    console.log(collectionData.collection_uri)
     const data = new DataV2({
       symbol: candyMachine.data.symbol ?? '',
-      name: 'Collection NFT',
-      uri: '',
+      name: collectionData.collection_name,
+      uri: collectionData.collection_uri,
       sellerFeeBasisPoints: candyMachine.data.seller_fee_basis_points,
       creators: [
         new Creator({

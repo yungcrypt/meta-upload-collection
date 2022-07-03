@@ -1,5 +1,5 @@
 #!/usr/bin/env ts-node
-import * as fs from 'fs';
+import * as fs from 'fs'
 import * as path from 'path';
 import { InvalidArgumentError, program } from 'commander';
 import * as anchor from '@project-serum/anchor';
@@ -41,6 +41,7 @@ import {
 import { getOwnersByMintAddresses } from './commands/owners';
 import log from 'loglevel';
 import { withdrawV2 } from './commands/withdraw';
+import { runUpload } from './commands/index';
 import { updateFromCache } from './commands/updateFromCache';
 import { StorageType } from './helpers/storage-type';
 import { getType } from 'mime';
@@ -89,6 +90,26 @@ programCommand('version', { requireWallet: false }).action(async () => {
   log.info(`Candy Machine Version: ${revision}`);
 });
 
+programCommand('upload_collection_nft_meta')
+  .requiredOption(
+    '-cm, --collection-metadata <string>',
+    'JSON file with collection NFT metadata',
+  )
+  .option(
+    '-r, --rpc-url <string>',
+    'custom rpc url since this is a heavy command',
+  )
+  .action(async ( options, cmd) => {
+    const {
+      keypair,
+      collectionMetadata
+    } = cmd.opts();
+    
+
+
+    const walletKeyPair = loadWalletKey(keypair);
+    runUpload(walletKeyPair, collectionMetadata)
+  })
 programCommand('upload')
   .argument(
     '<directory>',
@@ -100,6 +121,10 @@ programCommand('upload')
   .requiredOption(
     '-cp, --config-path <string>',
     'JSON file with candy machine settings',
+  )
+  .requiredOption(
+    '-cc, --collection-config <string>',
+    'JSON file with collection NFT metadata',
   )
   .option(
     '-r, --rpc-url <string>',
@@ -129,6 +154,7 @@ programCommand('upload')
       rateLimit,
       collectionMint,
       setCollectionMint,
+      collectionConfig,
     } = cmd.opts();
 
     if (!CLUSTERS.some(cluster => cluster.name === env)) {
@@ -306,6 +332,7 @@ programCommand('upload')
         collectionMintPubkey,
         setCollectionMint,
         rpcUrl,
+        collectionConfig,
       });
     } catch (err) {
       log.warn('upload was not successful, please re-run.', err);
@@ -928,6 +955,10 @@ programCommand('update_candy_machine')
   });
 
 programCommand('set_collection')
+  .requiredOption(
+    '-cc, --collection-config <string>',
+    'JSON file with collection NFT metadata',
+  )
   .option(
     '-m, --collection-mint <string>',
     'optional collection mint ID. Will be randomly generated if not provided',
@@ -937,7 +968,7 @@ programCommand('set_collection')
     'custom rpc url since this is a heavy command',
   )
   .action(async (directory, cmd) => {
-    const { keypair, env, cacheName, rpcUrl, collectionMint } = cmd.opts();
+    const { keypair, env, cacheName, rpcUrl, collectionMint, collectionConfig } = cmd.opts();
 
     const cacheContent = loadCache(cacheName, env);
     const candyMachine = new PublicKey(cacheContent.program.candyMachine);
@@ -953,6 +984,7 @@ programCommand('set_collection')
       anchorProgram,
       candyMachine,
       collectionMintPubkey,
+      collectionConfig,
     );
 
     log.info('set collection finished', tx);
