@@ -29,6 +29,391 @@ import { pinataUpload } from '../helpers/upload/pinata';
 import { setCollection } from './set-collection';
 import { nftStorageUploadGenerator } from '../helpers/upload/nft-storage';
 
+export async function uploadV3({
+  files,
+  cacheName,
+  env,
+  totalNFTs,
+  storage,
+  retainAuthority,
+  mutable,
+  nftStorageKey,
+  nftStorageGateway,
+  ipfsCredentials,
+  pinataJwt,
+  pinataGateway,
+  awsS3Bucket,
+  batchSize,
+  price,
+  treasuryWallet,
+  splToken,
+  gatekeeper,
+  goLiveDate,
+  endSettings,
+  whitelistMintSettings,
+  hiddenSettings,
+  uuid,
+  walletKeyPair,
+  anchorProgram,
+  arweaveJwk,
+  rateLimit,
+  collectionMintPubkey,
+  setCollectionMint,
+  rpcUrl,
+  collectionFolder
+}: {
+  files: string[];
+
+  cacheName: string;
+  env: 'mainnet-beta' | 'devnet';
+  totalNFTs: number;
+  storage: string;
+  retainAuthority: boolean;
+  mutable: boolean;
+  nftStorageKey: string;
+  nftStorageGateway: string | null;
+  ipfsCredentials: ipfsCreds;
+  pinataJwt: string;
+  pinataGateway: string;
+  awsS3Bucket: string;
+  batchSize: number;
+  price: BN;
+  treasuryWallet: PublicKey;
+  splToken: PublicKey;
+  gatekeeper: null | {
+    expireOnUse: boolean;
+    gatekeeperNetwork: web3.PublicKey;
+  };
+  goLiveDate: null | BN;
+  endSettings: null | [number, BN];
+  whitelistMintSettings: null | {
+    mode: any;
+    mint: PublicKey;
+    presale: boolean;
+    discountPrice: null | BN;
+  };
+  hiddenSettings: null | {
+    name: string;
+    uri: string;
+    hash: Uint8Array;
+  };
+  uuid: string;
+  walletKeyPair: web3.Keypair;
+  anchorProgram: Program;
+  arweaveJwk: string;
+  rateLimit: number;
+  collectionMintPubkey: null | PublicKey;
+  setCollectionMint: boolean;
+  rpcUrl: null | string;
+  collectionFolder: string;
+}): Promise<boolean> {
+  const savedContent = loadCache(cacheName, env);
+  const cacheContent = savedContent || {};
+  log.info("uploading the collection nft assets")
+  log.info(collectionFolder)
+
+  if (!cacheContent.program) {
+    cacheContent.program = {};
+  }
+
+  if (!cacheContent.items) {
+    cacheContent.items = {};
+  }
+
+  const dedupedAssetKeys = getAssetKeysNeedingUpload(cacheContent.items, files);
+  const dirname = path.dirname(files[0]);
+  let candyMachine = cacheContent.program.candyMachine
+    ? new PublicKey(cacheContent.program.candyMachine)
+    : undefined;
+
+  if (!cacheContent.program.uuid) {
+    const firstAssetManifest = getAssetManifest(dirname, '0');
+
+    try {
+      const remainingAccounts = [];
+
+      if (splToken) {
+        const splTokenKey = new PublicKey(splToken);
+
+        remainingAccounts.push({
+          pubkey: splTokenKey,
+          isWritable: false,
+          isSigner: false,
+        });
+      }
+
+      if (
+        !firstAssetManifest.properties?.creators?.every(
+          creator => creator.address !== undefined,
+        )
+      ) {
+        throw new Error('Creator address is missing');
+      }
+
+      // initialize candy
+      log.info(`initializing candy machine`);
+      const res = await createCandyMachineV2(
+        anchorProgram,
+        walletKeyPair,
+        treasuryWallet,
+        splToken,
+        {
+          itemsAvailable: new BN(totalNFTs),
+          uuid,
+          symbol: firstAssetManifest.symbol,
+          sellerFeeBasisPoints: firstAssetManifest.seller_fee_basis_points,
+          isMutable: mutable,
+          maxSupply: new BN(0),
+          retainAuthority: retainAuthority,
+          gatekeeper,
+          goLiveDate,
+          price,
+          endSettings,
+          whitelistMintSettings,
+          hiddenSettings,
+          creators: firstAssetManifest.properties.creators.map(creator => {
+            return {
+              address: new PublicKey(creator.address),
+              verified: true,
+              share: creator.share,
+            };
+          }),
+        },
+      );
+      cacheContent.program.uuid = res.uuid;
+      cacheContent.program.candyMachine = res.candyMachine.toBase58();
+      candyMachine = res.candyMachine;
+
+      if (setCollectionMint) {
+        
+        const collection = await setCollection(
+          walletKeyPair,
+          anchorProgram,
+          res.candyMachine,
+          collectionMintPubkey,
+          collectionFolder,
+        );
+        console.log('Collection: ', collection);
+        cacheContent.program.collection = collection.collectionMetadata;
+      } else {
+        console.log('No collection set');
+      }
+
+      log.info(
+        `initialized config for a candy machine with publickey: ${res.candyMachine.toBase58()}`,
+      );
+
+      saveCache(cacheName, env, cacheContent);
+    } catch (exx) {
+      log.error('Error deploying config to Solana network.', exx);
+      throw exx;
+    }
+  } else {
+    log.info(
+      `config for a candy machine with publickey: ${cacheContent.program.candyMachine} has been already initialized`,
+    );
+  }
+
+  const uploadedItems = Object.values(cacheContent.items).filter(
+    (f: { link: string }) => !!f.link,
+  ).length;
+
+  log.info(`[${uploadedItems}] out of [${totalNFTs}] items have been uploaded`);
+
+  if (dedupedAssetKeys.length) {
+    log.info(
+      `Starting upload for [${
+        dedupedAssetKeys.length
+      }] items, format ${JSON.stringify(dedupedAssetKeys[0])}`,
+    );
+  }
+
+  if (dedupedAssetKeys.length) {
+    if (
+      storage === StorageType.ArweaveBundle ||
+      storage === StorageType.ArweaveSol
+    ) {
+      // Initialize the Arweave Bundle Upload Generator.
+      // https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Generator
+      const arweaveBundleUploadGenerator = makeArweaveBundleUploadGenerator(
+        storage,
+        dirname,
+        dedupedAssetKeys,
+        env,
+        storage === StorageType.ArweaveBundle
+          ? JSON.parse((await readFile(arweaveJwk)).toString())
+          : undefined,
+        storage === StorageType.ArweaveSol ? walletKeyPair : undefined,
+        batchSize,
+        rpcUrl,
+      );
+
+      // Loop over every uploaded bundle of asset filepairs (PNG + JSON)
+      // and save the results to the Cache object, persist it to the Cache file.
+      for await (const value of arweaveBundleUploadGenerator) {
+        const { cacheKeys, arweavePathManifestLinks, updatedManifests } = value;
+
+        updateCacheAfterUpload(
+          cacheContent,
+          cacheKeys,
+          arweavePathManifestLinks,
+          updatedManifests.map(m => m.name),
+        );
+
+        saveCache(cacheName, env, cacheContent);
+        log.info('Saved bundle upload result to cache.');
+      }
+      log.info('Upload done. Cleaning up...');
+      if (storage === StorageType.ArweaveSol && env !== 'devnet') {
+        log.info('Waiting 5 seconds to check Bundlr balance.');
+        await sleep(5000);
+        await withdrawBundlr(walletKeyPair);
+      }
+    } else if (storage === StorageType.NftStorage) {
+      const generator = nftStorageUploadGenerator({
+        dirname,
+        assets: dedupedAssetKeys,
+        env,
+        walletKeyPair,
+        nftStorageKey,
+        nftStorageGateway,
+        batchSize,
+      });
+      for await (const result of generator) {
+        updateCacheAfterUpload(
+          cacheContent,
+          result.assets.map(a => a.cacheKey),
+          result.assets.map(a => a.metadataJsonLink),
+          result.assets.map(a => a.updatedManifest.name),
+        );
+
+        saveCache(cacheName, env, cacheContent);
+        log.info('Saved bundle upload result to cache.');
+      }
+    } else {
+      const progressBar = new cliProgress.SingleBar(
+        {
+          format: 'Progress: [{bar}] {percentage}% | {value}/{total}',
+        },
+        cliProgress.Presets.shades_classic,
+      );
+      progressBar.start(dedupedAssetKeys.length, 0);
+
+      await PromisePool.withConcurrency(batchSize || 10)
+        .for(dedupedAssetKeys)
+        .handleError(async (err, asset) => {
+          log.error(
+            `\nError uploading ${JSON.stringify(asset)} asset (skipping)`,
+            err.message,
+          );
+          await sleep(5000);
+        })
+        .process(async asset => {
+          const manifest = getAssetManifest(
+            dirname,
+            asset.index.includes('json') ? asset.index : `${asset.index}.json`,
+          );
+
+          const image = path.join(dirname, `${manifest.image}`);
+          const animation =
+            'animation_url' in manifest
+              ? path.join(dirname, `${manifest.animation_url}`)
+              : undefined;
+          const manifestBuffer = Buffer.from(JSON.stringify(manifest));
+
+          if (
+            animation &&
+            (!fs.existsSync(animation) || !fs.lstatSync(animation).isFile())
+          ) {
+            throw new Error(
+              `Missing file for the animation_url specified in ${asset.index}.json`,
+            );
+          }
+
+          let link, imageLink, animationLink;
+          try {
+            switch (storage) {
+              case StorageType.Pinata:
+                [link, imageLink, animationLink] = await pinataUpload(
+                  image,
+                  animation,
+                  manifestBuffer,
+                  pinataJwt,
+                  pinataGateway,
+                );
+                break;
+              case StorageType.Ipfs:
+                [link, imageLink, animationLink] = await ipfsUpload(
+                  ipfsCredentials,
+                  image,
+                  animation,
+                  manifestBuffer,
+                );
+                break;
+              case StorageType.Aws:
+                [link, imageLink, animationLink] = await awsUpload(
+                  awsS3Bucket,
+                  image,
+                  animation,
+                  manifestBuffer,
+                );
+                break;
+              case StorageType.Arweave:
+              default:
+                [link, imageLink] = await arweaveUpload(
+                  walletKeyPair,
+                  anchorProgram,
+                  env,
+                  image,
+                  manifestBuffer,
+                  manifest,
+                  asset.index,
+                );
+            }
+            if (
+              animation ? link && imageLink && animationLink : link && imageLink
+            ) {
+              log.debug('Updating cache for ', asset.index);
+              cacheContent.items[asset.index] = {
+                link,
+                imageLink,
+                name: manifest.name,
+                onChain: false,
+              };
+              saveCache(cacheName, env, cacheContent);
+            }
+          } finally {
+            progressBar.increment();
+          }
+        });
+      progressBar.stop();
+    }
+    saveCache(cacheName, env, cacheContent);
+  }
+
+  let uploadSuccessful = true;
+  if (!hiddenSettings) {
+    uploadSuccessful = await writeIndices({
+      anchorProgram,
+      cacheContent,
+      cacheName,
+      env,
+      candyMachine,
+      walletKeyPair,
+      rateLimit,
+    });
+
+    const uploadedItems = Object.values(cacheContent.items).filter(
+      (f: { link: string }) => !!f.link,
+    ).length;
+    uploadSuccessful = uploadSuccessful && uploadedItems === totalNFTs;
+  } else {
+    log.info('Skipping upload to chain as this is a hidden Candy Machine');
+  }
+
+  console.log(`Done. Successful = ${uploadSuccessful}.`);
+  return uploadSuccessful;
+}
 export async function uploadV2({
   files,
   cacheName,

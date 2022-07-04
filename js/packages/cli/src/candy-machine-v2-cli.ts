@@ -29,7 +29,7 @@ import {
   getCollectionPDA,
 } from './helpers/accounts';
 
-import { uploadV2 } from './commands/upload';
+import { uploadV3 } from './commands/upload';
 import { verifyTokenMetadata } from './commands/verifyTokenMetadata';
 import { loadCache, saveCache } from './helpers/cache';
 import { mintV2 } from './commands/mint';
@@ -119,12 +119,15 @@ programCommand('upload')
     },
   )
   .requiredOption(
-    '-cp, --config-path <string>',
-    'JSON file with candy machine settings',
+    '-cf, --collection-folder <directory>',
+    'directory for collection NFT containing the  following sub-directories: metadata, image, animation',
+    val => {
+      return ( val.substring(1));
+    },
   )
   .requiredOption(
-    '-cc, --collection-config <string>',
-    'JSON file with collection NFT metadata',
+    '-cp, --config-path <string>',
+    'JSON file with candy machine settings',
   )
   .option(
     '-r, --rpc-url <string>',
@@ -154,7 +157,7 @@ programCommand('upload')
       rateLimit,
       collectionMint,
       setCollectionMint,
-      collectionConfig,
+      collectionFolder,
     } = cmd.opts();
 
     if (!CLUSTERS.some(cluster => cluster.name === env)) {
@@ -162,6 +165,7 @@ programCommand('upload')
         'Your environement flag is invalid\nThe valid values are "mainnet-beta", "testnet" & "devnet"',
       );
     }
+    log.info(collectionFolder)
 
     const walletKeyPair = loadWalletKey(keypair);
     const anchorProgram = await loadCandyProgramV2(walletKeyPair, env, rpcUrl);
@@ -301,7 +305,7 @@ programCommand('upload')
     const startMs = Date.now();
     log.info('started at: ' + startMs.toString());
     try {
-      await uploadV2({
+      await uploadV3({
         files: supportedFiles,
         cacheName,
         env,
@@ -332,7 +336,7 @@ programCommand('upload')
         collectionMintPubkey,
         setCollectionMint,
         rpcUrl,
-        collectionConfig,
+        collectionFolder,
       });
     } catch (err) {
       log.warn('upload was not successful, please re-run.', err);

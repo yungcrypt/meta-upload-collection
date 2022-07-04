@@ -24,7 +24,7 @@ import {
 import log from 'loglevel';
 import { Program } from '@project-serum/anchor';
 import { parseCollectionMintPubkey } from '../helpers/various';
-
+import { runUpload } from '.';
 
 
 export async function setCollection(
@@ -32,8 +32,9 @@ export async function setCollection(
   anchorProgram: Program,
   candyMachineAddress: PublicKey,
   collectionMint: null | PublicKey,
-  collectionConfig: string,
+  collectionFolder: string,
 ) {
+  // uploading assets for collection NFT first
   const signers = [walletKeyPair];
   const wallet = new anchor.Wallet(walletKeyPair);
   const instructions = [];
@@ -42,6 +43,7 @@ export async function setCollection(
   let masterEditionPubkey: PublicKey;
   let collectionPDAPubkey: PublicKey;
   let collectionAuthorityRecordPubkey: PublicKey;
+  await runUpload(walletKeyPair, collectionFolder)
 
   const candyMachine: any = await anchorProgram.account.candyMachine.fetch(
     candyMachineAddress,
@@ -101,7 +103,7 @@ export async function setCollection(
         ),
       ],
     );
-    const collectionData = fs.readJSONSync(collectionConfig);
+    const collectionData = fs.readJSONSync(process.cwd()+collectionFolder+"/output.json");
     console.log(collectionData.collection_uri)
     const data = new DataV2({
       symbol: candyMachine.data.symbol ?? '',
