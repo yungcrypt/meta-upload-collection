@@ -269,7 +269,7 @@ async function getBundleRange(
     total += filePairSize;
     count += 1;
   }
-  return { count, size: total };
+  return { count: 2, size: total };
 }
 
 const imageTags = [...BASE_TAGS];
